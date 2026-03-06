@@ -19,12 +19,17 @@ class Payment extends Model
 
     protected $fillable = [
         'sale_id',
+        'customer_id',
+        'sale_number',
         'company_id',
         'branch_id',
         'warehouse_id',
         'amount',
         'currency_id',
         'exchange_rate',
+        'rate_source',
+        'primary_payment_method_id',
+        'payment_date',
         'payment_number',
         'notes',
         'status',
@@ -35,6 +40,7 @@ class Payment extends Model
     {
         return [
             'amount' => 'decimal:2',
+            'payment_date' => 'date',
             'status' => PaymentStatus::class,
         ];
     }
@@ -106,6 +112,11 @@ class Payment extends Model
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function primaryPaymentMethod(): BelongsTo
+    {
+        return $this->belongsTo(PaymentMethod::class, 'primary_payment_method_id');
     }
 
     public function lines(): HasMany

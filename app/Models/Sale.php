@@ -21,13 +21,18 @@ class Sale extends Model
     use HasFactory;
 
     protected $fillable = [
+        'number',
         'company_id',
         'branch_id',
         'warehouse_id',
-        'customer_id', // optional; reserved for future credit/loyalty system
+        'customer_id',
         'type',
         'status',
         'total',
+        'paid_amount',
+        'due_amount',
+        'currency',
+        'exchange_rate',
         'created_by',
         'return_for_sale_id',
     ];
@@ -36,6 +41,9 @@ class Sale extends Model
     {
         return [
             'total' => 'decimal:2',
+            'paid_amount' => 'decimal:2',
+            'due_amount' => 'decimal:2',
+            'exchange_rate' => 'decimal:6',
             'type' => SaleType::class,
             'status' => SaleStatus::class,
         ];

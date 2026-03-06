@@ -11,7 +11,7 @@ use InvalidArgumentException;
 class SerialSaleGuard
 {
     /**
-     * Validate that the serial can be sold: exists, in_stock, and in the sale warehouse.
+     * Validate that the serial can be sold: exists, in_stock, not already sold, and in the sale warehouse.
      */
     public function validateSerialForSale(int $serialId, int $productId, int $warehouseId): void
     {
@@ -21,6 +21,9 @@ class SerialSaleGuard
         }
         if ($serial->product_id !== $productId) {
             throw new InvalidArgumentException("Serial does not belong to product id {$productId}.");
+        }
+        if ($serial->status === 'sold') {
+            throw new InvalidArgumentException("Serial/IMEI {$serial->serial_number} is already sold (serial id {$serialId}). Duplicate IMEI sales are not allowed.");
         }
         if ($serial->status !== 'in_stock') {
             throw new InvalidArgumentException("Serial is not available for sale (status: {$serial->status}).");

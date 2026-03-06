@@ -58,13 +58,29 @@ class SaleController extends Controller
             'warehouse_id' => ['required', 'integer'],
             'customer_id' => ['nullable', 'integer'],
             'type' => ['required', 'string', 'in:sale,quotation'],
+            'currency' => ['nullable', 'string', 'max:10'],
+            'exchange_rate' => ['nullable', 'numeric', 'min:0.000001'],
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.product_id' => ['required', 'integer'],
             'lines.*.quantity' => ['required', 'numeric', 'min:0.01'],
             'lines.*.unit_price' => ['required', 'numeric', 'min:0'],
             'lines.*.discount' => ['nullable', 'numeric', 'min:0'],
             'lines.*.serial_id' => ['nullable', 'integer', 'exists:product_serials,id'],
+            'lines.*.variant_id' => ['nullable', 'integer', 'exists:product_variants,id'],
+            'lines.*.warehouse_id' => ['nullable', 'integer', 'exists:warehouses,id'],
         ]);
+
+        $serialIds = collect($validated['lines'])
+            ->pluck('serial_id')
+            ->filter()
+            ->values();
+
+        if ($serialIds->count() !== $serialIds->unique()->count()) {
+            return response()->json([
+                'message' => 'Sale validation failed.',
+                'errors' => ['sale' => ['Duplicate serial_id (IMEI) detected in the same request. Each serial can only appear once per sale.']],
+            ], 422);
+        }
 
         foreach ($validated['lines'] as $i => $line) {
             $maxDiscount = ($line['quantity'] ?? 0) * ($line['unit_price'] ?? 0);

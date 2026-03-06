@@ -44,6 +44,7 @@ class SaleService
         $lines = $data['lines'] ?? [];
 
         $this->ensureBranchAndWarehouseBelongToCompany($creator->company_id, $branchId, $warehouseId);
+        $this->ensureLineWarehousesBelongToBranch($branchId, $lines, $warehouseId);
 
         return DB::transaction(function () use ($data, $creator, $type, $branchId, $warehouseId, $lines) {
             $productIds = array_unique(array_map(fn ($l) => (int) ($l['product_id'] ?? 0), $lines));
@@ -70,15 +71,26 @@ class SaleService
                 'type' => $type,
                 'status' => $type === SaleType::Sale ? SaleStatus::Completed : SaleStatus::Pending,
                 'total' => $total,
+                'paid_amount' => 0,
+                'due_amount' => $total,
+                'currency' => $data['currency'] ?? 'PKR',
+                'exchange_rate' => $data['exchange_rate'] ?? 1.000000,
                 'created_by' => $creator->id,
             ]);
+            $this->assignSaleNumber($sale);
 
             foreach ($lines as $line) {
                 $this->createLine($sale, $line, $warehouseId, $creator, $type);
             }
 
             if ($type === SaleType::Quotation && ! empty($lines)) {
-                $this->createReservationsForQuotation($sale, $lines, $warehouseId);
+                $reservationsByProduct = $this->createReservationsForQuotation($sale, $lines, $warehouseId);
+                foreach ($sale->lines as $saleLine) {
+                    $reservationId = $reservationsByProduct[$saleLine->product_id] ?? null;
+                    if ($reservationId) {
+                        $saleLine->update(['reservation_id' => $reservationId]);
+                    }
+                }
             }
 
             // Auto-create warranty registrations for completed sales
@@ -224,9 +236,14 @@ class SaleService
                 'type' => SaleType::Return,
                 'status' => SaleStatus::Completed,
                 'total' => $total,
+                'paid_amount' => 0,
+                'due_amount' => $total,
+                'currency' => $originalSale->currency ?? 'PKR',
+                'exchange_rate' => $originalSale->exchange_rate ?? 1.000000,
                 'created_by' => $creator->id,
                 'return_for_sale_id' => $originalSale->id,
             ]);
+            $this->assignSaleNumber($returnSale);
 
             $movementIds = [];
             $linesWithMovement = [];
@@ -236,7 +253,8 @@ class SaleService
                 $variantId = isset($line['variant_id']) ? (int) $line['variant_id'] : null;
                 $unitPrice = (float) ($line['unit_price'] ?? 0);
                 $discount = (float) ($line['discount'] ?? 0);
-                $subtotal = max(0, $quantity * $unitPrice - $discount);
+                $lineTotalReturn = $quantity * $unitPrice;
+                $subtotal = max(0, $lineTotalReturn - $discount);
 
                 $movement = StockMovement::withoutGlobalScope('company')->create([
                     'product_id' => $productId,
@@ -258,10 +276,12 @@ class SaleService
 
                 SaleLine::withoutGlobalScope('company')->create([
                     'sale_id' => $returnSale->id,
+                    'warehouse_id' => $warehouseId,
                     'product_id' => $productId,
                     'variant_id' => $variantId ?: null,
                     'quantity' => $quantity,
                     'unit_price' => $unitPrice,
+                    'line_total' => $lineTotalReturn,
                     'discount' => $discount,
                     'subtotal' => $subtotal,
                     'stock_movement_id' => $movement->id,
@@ -452,6 +472,7 @@ class SaleService
             $discount = $lineTotal;
         }
         $subtotal = max(0, $lineTotal - $discount);
+        $resolvedWarehouseId = (int) ($line['warehouse_id'] ?? $warehouseId);
 
         $stockMovementId = null;
         if ($saleType === SaleType::Sale) {
@@ -481,7 +502,7 @@ class SaleService
 
                     StockMovement::withoutGlobalScope('company')->create([
                         'product_id' => $componentId,
-                        'warehouse_id' => $warehouseId,
+                        'warehouse_id' => $resolvedWarehouseId,
                         'quantity' => $componentQty,
                         'type' => StockMovementType::SaleOut,
                         'reference_type' => 'Sale',
@@ -495,21 +516,21 @@ class SaleService
                     if (! $serialId) {
                         throw new InvalidArgumentException("Serialized product (id {$productId}) requires a serial_id for sale.");
                     }
-                    $this->serialSaleGuard->validateSerialForSale($serialId, $productId, $warehouseId);
+                    $this->serialSaleGuard->validateSerialForSale($serialId, $productId, $resolvedWarehouseId);
                 }
 
                 // Batch-tracked products: validate batch or allocate FEFO.
                 $resolvedBatchId = $batchId;
                 if ($product->track_batch) {
                     if ($batchId) {
-                        if (! $this->batchAllocationService->validateBatchForMovement($batchId, $productId, $warehouseId)) {
+                        if (! $this->batchAllocationService->validateBatchForMovement($batchId, $productId, $resolvedWarehouseId)) {
                             throw new InvalidArgumentException("Invalid or expired batch id {$batchId} for product id {$productId}.");
                         }
                         $resolvedBatchId = $batchId;
                     } else {
-                        $batch = $this->batchAllocationService->getEarliestValidBatch($productId, $warehouseId);
+                        $batch = $this->batchAllocationService->getEarliestValidBatch($productId, $resolvedWarehouseId);
                         if (! $batch) {
-                            throw new InvalidArgumentException("No valid (non-expired) batch available for product id {$productId} in warehouse {$warehouseId}.");
+                            throw new InvalidArgumentException("No valid (non-expired) batch available for product id {$productId} in warehouse {$resolvedWarehouseId}.");
                         }
                         $resolvedBatchId = $batch->id;
                     }
@@ -518,7 +539,7 @@ class SaleService
                 $movement = StockMovement::withoutGlobalScope('company')->create([
                     'product_id' => $productId,
                     'variant_id' => $variantId ?: null,
-                    'warehouse_id' => $warehouseId,
+                    'warehouse_id' => $resolvedWarehouseId,
                     'quantity' => $quantity,
                     'unit_cost' => $unitCost,
                     'type' => StockMovementType::SaleOut,
@@ -539,12 +560,16 @@ class SaleService
             }
         }
 
+        $resolvedWarehouseId = (int) ($line['warehouse_id'] ?? $warehouseId);
+
         SaleLine::withoutGlobalScope('company')->create([
             'sale_id' => $sale->id,
+            'warehouse_id' => $resolvedWarehouseId,
             'product_id' => $productId,
             'variant_id' => $variantId ?: null,
             'quantity' => $quantity,
             'unit_price' => $unitPrice,
+            'line_total' => $lineTotal,
             'discount' => $discount,
             'subtotal' => $subtotal,
             'stock_movement_id' => $stockMovementId,
@@ -553,18 +578,48 @@ class SaleService
         ]);
     }
 
+    private function ensureLineWarehousesBelongToBranch(int $branchId, array $lines, int $defaultWarehouseId): void
+    {
+        $warehouseIds = array_unique(array_filter(array_map(function ($line) use ($defaultWarehouseId) {
+            $wid = isset($line['warehouse_id']) ? (int) $line['warehouse_id'] : null;
+            return $wid > 0 ? $wid : null;
+        }, $lines)));
+        if (empty($warehouseIds)) {
+            return;
+        }
+        $warehouses = Warehouse::withoutGlobalScope('company')
+            ->whereIn('id', $warehouseIds)
+            ->get();
+        foreach ($warehouses as $warehouse) {
+            if ((int) $warehouse->branch_id !== $branchId) {
+                throw new InvalidArgumentException("Warehouse id {$warehouse->id} ({$warehouse->name}) does not belong to the sale's branch. Line-level warehouse_id must belong to the same branch as the sale.");
+            }
+        }
+    }
+
+    private function assignSaleNumber(Sale $sale): void
+    {
+        $year = $sale->created_at->format('Y');
+        $seq = Sale::withoutGlobalScope('company')
+            ->where('company_id', $sale->company_id)
+            ->whereYear('created_at', $year)
+            ->count();
+        $number = 'SAL-'.$year.'-'.str_pad((string) $seq, 6, '0', STR_PAD_LEFT);
+        $sale->update(['number' => $number]);
+    }
+
     /**
      * Create stock_reservations entries for a quotation, aggregating required quantities per product.
      *
-     * Reservations are per-warehouse and per-product (not per-line), and are marked as active until
-     * the quotation is converted or otherwise released.
+     * @return array<int, int> product_id => reservation.id
      */
-    private function createReservationsForQuotation(Sale $sale, array $lines, int $warehouseId): void
+    private function createReservationsForQuotation(Sale $sale, array $lines, int $warehouseId): array
     {
         $requirements = $this->buildStockRequirementsForLines($lines);
+        $map = [];
 
         if (empty($requirements)) {
-            return;
+            return $map;
         }
 
         foreach ($requirements as $productId => $requiredQty) {
@@ -572,7 +627,7 @@ class SaleService
                 continue;
             }
 
-            StockReservation::create([
+            $reservation = StockReservation::create([
                 'company_id' => $sale->company_id,
                 'product_id' => $productId,
                 'variant_id' => null,
@@ -582,6 +637,10 @@ class SaleService
                 'reference_id' => $sale->id,
                 'status' => 'active',
             ]);
+
+            $map[$productId] = $reservation->id;
         }
+
+        return $map;
     }
 }

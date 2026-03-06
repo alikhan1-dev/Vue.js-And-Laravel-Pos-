@@ -17,13 +17,16 @@ class SaleLine extends Model
 
     protected $fillable = [
         'sale_id',
+        'warehouse_id',
         'product_id',
         'variant_id',
         'quantity',
         'unit_price',
+        'line_total',
         'discount',
         'subtotal',
         'stock_movement_id',
+        'reservation_id',
         'lot_number',
         'imei_id',
     ];
@@ -33,6 +36,7 @@ class SaleLine extends Model
         return [
             'quantity' => 'decimal:2',
             'unit_price' => 'decimal:2',
+            'line_total' => 'decimal:2',
             'discount' => 'decimal:2',
             'subtotal' => 'decimal:2',
         ];
@@ -65,9 +69,19 @@ class SaleLine extends Model
         return $this->belongsTo(ProductVariant::class, 'variant_id');
     }
 
+    public function warehouse(): BelongsTo
+    {
+        return $this->belongsTo(Warehouse::class);
+    }
+
     public function stockMovement(): BelongsTo
     {
         return $this->belongsTo(StockMovement::class);
+    }
+
+    public function reservation(): BelongsTo
+    {
+        return $this->belongsTo(StockReservation::class, 'reservation_id');
     }
 
     public function serial(): BelongsTo

@@ -11,6 +11,8 @@ A **multi-tenant POS and ERP system** built from scratch. The backend is **PHP L
 - **Inventory engine:** Movement-based stock (sale_out, return_in, transfers, adjustments). Stock cache, reservations for quotations, batch/serial tracking.
 - **POS sales & quotations:** Sales, quotations, and returns with warehouse-level stock integration. Quotations can reserve stock; returns use canonical `return_in` movements.
 - **Warranty & serials:** Warranty registrations linked to sales; serial/IMEI handling for returns and claims.
+- **Payments & accounting:** Double-entry journal engine (`journal_entries` + `journal_entry_lines`) with per-branch journal entries, human-readable JE numbers (e.g. `JE-2026-00001`), and document reference numbers (e.g. `INV-2026-0001`, `PAY-2026-00005`).
+- **POS-friendly due amounts:** Cached `paid_amount` and `due_amount` on `sales` so the POS can show “amount paid” / “amount due” without running `SUM(payments)` on every request.
 - **Documentation:** Step-by-step architecture and API docs in the `docs/` folder.
 
 ---
@@ -59,7 +61,7 @@ A **multi-tenant POS and ERP system** built from scratch. The backend is **PHP L
 | [branches-warehouses.md](docs/branches-warehouses.md) | Branch/warehouse schema, FK rules, soft deletes, warehouse types, default warehouse, data hierarchy |
 | [inventory-movements.md](docs/inventory-movements.md) | Stock movements, stock cache, reservations, inventory journal, alerts |
 | [sales-quotations.md](docs/sales-quotations.md) | Sales, quotations, returns, reservations, return_in, validation, audit log, API |
-| [payment-accounting.md](docs/payment-accounting.md) | Payments and accounting integration |
+| [payment-accounting.md](docs/payment-accounting.md) | Step 5: Payments, cached due amounts, and double-entry accounting (journal entries, branch reporting, JE numbers) |
 
 ---
 

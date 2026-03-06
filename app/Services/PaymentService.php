@@ -48,24 +48,43 @@ class PaymentService
 
         return DB::transaction(function () use ($data, $creator, $saleId, $branchId, $warehouseId, $lines, $totalAmount, $status) {
             $sale = null;
+            $customerId = null;
+            $saleNumber = null;
             if ($saleId) {
                 $sale = Sale::withoutGlobalScope('company')
                     ->where('company_id', $creator->company_id)
                     ->lockForUpdate()
                     ->findOrFail($saleId);
-                $alreadyPaid = $sale->payments()->where('status', PaymentStatus::Completed)->sum('amount');
-                $remaining = (float) $sale->total - (float) $alreadyPaid;
+                if ((int) $sale->branch_id !== $branchId) {
+                    throw new InvalidArgumentException('Payment branch_id must match the sale\'s branch. Payments cannot be recorded against a different branch.');
+                }
+                $remaining = (float) $sale->total - (float) $sale->paid_amount;
                 if ($totalAmount > $remaining) {
                     throw new InvalidArgumentException('Payment total (' . $totalAmount . ') exceeds remaining due (' . $remaining . ').');
                 }
+                $customerId = $sale->customer_id;
+                $saleNumber = $sale->number;
             }
+            $paymentDate = isset($data['payment_date']) ? $data['payment_date'] : now()->toDateString();
+            if ($paymentDate instanceof \DateTimeInterface) {
+                $paymentDate = $paymentDate->format('Y-m-d');
+            }
+            $firstLineMethodId = ! empty($lines[0]['payment_method_id']) ? (int) $lines[0]['payment_method_id'] : null;
             $payment = Payment::withoutGlobalScope('company')->create([
                 'sale_id' => $saleId,
+                'customer_id' => $customerId,
+                'sale_number' => $saleNumber,
                 'company_id' => $creator->company_id,
                 'branch_id' => $branchId,
                 'warehouse_id' => $warehouseId,
                 'amount' => $totalAmount,
+                'currency_id' => $data['currency_id'] ?? null,
+                'exchange_rate' => $data['exchange_rate'] ?? 1,
+                'rate_source' => $data['rate_source'] ?? null,
+                'primary_payment_method_id' => $firstLineMethodId,
+                'payment_date' => $paymentDate,
                 'status' => $status,
+                'notes' => $data['notes'] ?? null,
                 'created_by' => $creator->id,
             ]);
 
@@ -104,8 +123,10 @@ class PaymentService
             if ($status === PaymentStatus::Completed && $totalAmount > 0) {
                 $this->createBalancedJournalEntry(
                     companyId: $creator->company_id,
+                    branchId: $payment->branch_id,
                     referenceType: JournalEntry::REFERENCE_TYPE_PAYMENT,
                     referenceId: $payment->id,
+                    referenceNumber: $payment->payment_number,
                     entryType: JournalEntry::ENTRY_TYPE_PAYMENT_RECEIPT,
                     createdBy: $creator->id,
                     debitLines: array_map(fn ($line) => [
@@ -119,6 +140,12 @@ class PaymentService
                         'description' => 'Payment for sale #' . ($sale?->id ?? 'N/A'),
                     ]],
                 );
+            }
+
+            if ($status === PaymentStatus::Completed && $saleId && $totalAmount > 0) {
+                $sale->increment('paid_amount', $totalAmount);
+                $sale->refresh();
+                $sale->update(['due_amount' => max(0, (float) $sale->total - (float) $sale->paid_amount)]);
             }
 
             return $payment->load([
@@ -154,10 +181,13 @@ class PaymentService
         return DB::transaction(function () use ($payment, $amount, $account, $salesReturnsAccount, $creator) {
             $refundPayment = Payment::withoutGlobalScope('company')->create([
                 'sale_id' => $payment->sale_id,
+                'customer_id' => $payment->customer_id,
+                'sale_number' => $payment->sale_number,
                 'company_id' => $payment->company_id,
                 'branch_id' => $payment->branch_id,
                 'warehouse_id' => $payment->warehouse_id,
                 'amount' => -$amount,
+                'payment_date' => now()->toDateString(),
                 'status' => PaymentStatus::Refunded,
                 'created_by' => $creator->id,
             ]);
@@ -165,8 +195,10 @@ class PaymentService
             // We treat refund as adjustment entry: Dr Sales Returns, Cr Cash/Bank
             $this->createBalancedJournalEntry(
                 companyId: $payment->company_id,
+                branchId: $payment->branch_id,
                 referenceType: JournalEntry::REFERENCE_TYPE_PAYMENT,
                 referenceId: $refundPayment->id,
+                referenceNumber: $refundPayment->payment_number,
                 entryType: JournalEntry::ENTRY_TYPE_REFUND,
                 createdBy: $creator->id,
                 debitLines: [[
@@ -180,6 +212,16 @@ class PaymentService
                     'description' => 'Refund for payment #' . $payment->id,
                 ]],
             );
+
+            if ($payment->sale_id) {
+                Sale::withoutGlobalScope('company')
+                    ->where('id', $payment->sale_id)
+                    ->decrement('paid_amount', $amount);
+                $originalSale = Sale::withoutGlobalScope('company')->find($payment->sale_id);
+                if ($originalSale) {
+                    $originalSale->update(['due_amount' => max(0, (float) $originalSale->total - (float) $originalSale->paid_amount)]);
+                }
+            }
 
             return $refundPayment->load([
                 'lines.account',
@@ -264,8 +306,10 @@ class PaymentService
 
         $this->createBalancedJournalEntry(
             companyId: $sale->company_id,
+            branchId: $sale->branch_id,
             referenceType: JournalEntry::REFERENCE_TYPE_SALE,
             referenceId: $sale->id,
+            referenceNumber: $sale->number,
             entryType: JournalEntry::ENTRY_TYPE_SALE_POSTING,
             createdBy: $creator->id,
             debitLines: [[
@@ -291,8 +335,10 @@ class PaymentService
 
         $this->createBalancedJournalEntry(
             companyId: $originalSale->company_id,
+            branchId: $returnSale->branch_id,
             referenceType: JournalEntry::REFERENCE_TYPE_SALE,
             referenceId: $returnSale->id,
+            referenceNumber: $returnSale->number,
             entryType: JournalEntry::ENTRY_TYPE_REFUND,
             createdBy: $creator->id,
             debitLines: [[
@@ -314,8 +360,10 @@ class PaymentService
      */
     private function createBalancedJournalEntry(
         int $companyId,
+        ?int $branchId,
         string $referenceType,
         int $referenceId,
+        ?string $referenceNumber,
         string $entryType,
         ?int $createdBy,
         array $debitLines,
@@ -330,8 +378,10 @@ class PaymentService
 
         $entry = JournalEntry::withoutGlobalScope('company')->create([
             'company_id' => $companyId,
+            'branch_id' => $branchId,
             'reference_type' => $referenceType,
             'reference_id' => $referenceId,
+            'reference_number' => $referenceNumber,
             'entry_type' => $entryType,
             'created_by' => $createdBy,
             'is_locked' => true,

@@ -38,10 +38,16 @@ class PaymentController extends Controller
             $query->where('branch_id', $request->integer('branch_id'));
         }
         if ($request->filled('date_from')) {
-            $query->whereDate('created_at', '>=', $request->date_from);
+            $query->where(function ($q) use ($request) {
+                $q->whereDate('payment_date', '>=', $request->date_from)
+                    ->orWhereNull('payment_date')->whereDate('created_at', '>=', $request->date_from);
+            });
         }
         if ($request->filled('date_to')) {
-            $query->whereDate('created_at', '<=', $request->date_to);
+            $query->where(function ($q) use ($request) {
+                $q->whereDate('payment_date', '<=', $request->date_to)
+                    ->orWhereNull('payment_date')->whereDate('created_at', '<=', $request->date_to);
+            });
         }
         if ($request->filled('payment_method_id')) {
             $query->whereHas('lines', fn ($q) => $q->where('payment_method_id', $request->integer('payment_method_id')));
@@ -61,6 +67,7 @@ class PaymentController extends Controller
             'sale_id' => ['nullable', 'integer', 'exists:sales,id'],
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'warehouse_id' => ['nullable', 'integer', 'exists:warehouses,id'],
+            'payment_date' => ['nullable', 'date'],
             'status' => ['nullable', 'string', 'in:pending,completed,failed,refunded,cancelled'],
             'notes' => ['nullable', 'string', 'max:65535'],
             'lines' => ['required', 'array', 'min:1'],
