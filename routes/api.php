@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\WarehouseStockController;
 use App\Http\Controllers\Api\WarrantyLookupController;
 use App\Http\Controllers\Api\WarrantyClaimController;
 use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\SaleAdjustmentController;
 use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\PurchaseController;
 use App\Http\Controllers\Api\SupplierInvoiceController;
@@ -67,6 +68,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/sales/{id}/complete', [SaleController::class, 'complete']);
     Route::post('/sales/{id}/cancel', [SaleController::class, 'cancel']);
     Route::get('/sales/{id}/stock-check', [SaleController::class, 'stockCheck']);
+
+    // Sale adjustments (admin overrides for completed/immutable sales)
+    Route::get('/sale-adjustments', [SaleAdjustmentController::class, 'index']);
+    Route::post('/sales/{saleId}/adjustments', [SaleAdjustmentController::class, 'store']);
+    Route::post('/sale-adjustments/{id}/approve', [SaleAdjustmentController::class, 'approve']);
 
     // Customers (Sales & Customer Engine)
     Route::get('/customers', [CustomerController::class, 'index']);

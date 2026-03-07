@@ -18,6 +18,7 @@ use App\Models\StockReservation;
 use App\Models\Sale;
 use App\Models\SaleAuditLog;
 use App\Models\SaleLine;
+use App\Models\SaleLineHistory;
 use App\Models\SaleDiscount;
 use App\Models\SaleReturn;
 use App\Models\SaleReturnItem;
@@ -25,13 +26,16 @@ use App\Models\StockCache;
 use App\Models\StockMovement;
 use App\Models\User;
 use App\Models\Warehouse;
+use App\Support\RetryOnDeadlock;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class SaleService
 {
+    use RetryOnDeadlock;
     public function __construct(
         private PaymentService $paymentService,
+        private CustomerLedgerService $customerLedgerService,
         private WarrantyService $warrantyService,
         private SerialSaleGuard $serialSaleGuard,
         private BatchAllocationService $batchAllocationService,
@@ -52,8 +56,9 @@ class SaleService
 
         $this->ensureBranchAndWarehouseBelongToCompany($creator->company_id, $branchId, $warehouseId);
         $this->ensureLineWarehousesBelongToBranch($branchId, $lines, $warehouseId);
+        $this->enforcePosRequirements($data);
 
-        return DB::transaction(function () use ($data, $creator, $type, $branchId, $warehouseId, $lines, $isDraft) {
+        return $this->transactionWithRetry(function () use ($data, $creator, $type, $branchId, $warehouseId, $lines, $isDraft) {
             $productIds = array_unique(array_map(fn ($l) => (int) ($l['product_id'] ?? 0), $lines));
 
             if ($type === SaleType::Sale && ! $isDraft && ! empty($productIds)) {
@@ -94,6 +99,8 @@ class SaleService
                 'exchange_rate' => $data['exchange_rate'] ?? 1.000000,
                 'notes' => $data['notes'] ?? null,
                 'created_by' => $creator->id,
+                'device_id' => $data['device_id'] ?? null,
+                'pos_session_id' => $data['pos_session_id'] ?? null,
             ]);
             $this->assignSaleNumber($sale);
 
@@ -142,8 +149,10 @@ class SaleService
             );
 
             if ($type === SaleType::Sale && $sale->status === SaleStatus::Completed) {
-                // Accrual posting: Dr Accounts Receivable, Cr Sales Revenue
                 $this->paymentService->postSalePosting($sale, $creator);
+                if ($sale->customer_id) {
+                    $this->customerLedgerService->postInvoice($sale, $creator);
+                }
             }
 
             return $sale->load(['lines.product', 'lines.stockMovement', 'branch', 'warehouse']);
@@ -168,7 +177,7 @@ class SaleService
             'discount' => (float) $l->discount,
         ])->toArray();
 
-        return DB::transaction(function () use ($sale, $creator, $warehouseId, $linesData) {
+        return $this->transactionWithRetry(function () use ($sale, $creator, $warehouseId, $linesData) {
             $productIds = $sale->lines->pluck('product_id')->unique()->values()->all();
             if (! empty($productIds)) {
                 StockCache::where('warehouse_id', $warehouseId)->whereIn('product_id', $productIds)->lockForUpdate()->get();
@@ -215,8 +224,10 @@ class SaleService
             $metadata = SaleAuditMetadata::forConvertedToSale($movementIds, $linesWithMovement);
             $this->logAudit($sale->id, SaleAuditLog::EVENT_CONVERTED_TO_SALE, SaleStatus::Pending->value, SaleStatus::Completed->value, SaleType::Quotation->value, SaleType::Sale->value, $metadata, $creator->id);
 
-            // Accrual posting when quotation becomes completed sale
             $this->paymentService->postSalePosting($sale, $creator);
+            if ($sale->customer_id) {
+                $this->customerLedgerService->postInvoice($sale, $creator);
+            }
 
             return $sale->fresh(['lines.product', 'lines.stockMovement', 'branch', 'warehouse']);
         });
@@ -226,7 +237,7 @@ class SaleService
      * Create a sale return (dedicated return system). Creates SaleReturn + SaleReturnItem + ReturnIn movements.
      * Line-level validation: return quantity per product cannot exceed quantity sold in original sale.
      */
-    public function createReturn(Sale $originalSale, ?array $linesOverride, User $creator): SaleReturn
+    public function createReturn(Sale $originalSale, ?array $linesOverride, User $creator, ?string $returnReasonCode = null, ?string $reasonText = null): SaleReturn
     {
         if ($originalSale->type !== SaleType::Sale) {
             throw new InvalidArgumentException('Returns can only be created for completed sales.');
@@ -242,7 +253,7 @@ class SaleService
 
         $this->validateReturnQuantitiesAgainstOriginalSale($originalSale, $linesToReturn);
 
-        return DB::transaction(function () use ($originalSale, $linesToReturn, $warehouseId, $creator) {
+        return $this->transactionWithRetry(function () use ($originalSale, $linesToReturn, $warehouseId, $creator, $returnReasonCode, $reasonText) {
             $refundAmount = 0.0;
             foreach ($linesToReturn as $line) {
                 $qty = (float) ($line['quantity'] ?? 0);
@@ -251,6 +262,8 @@ class SaleService
                 $refundAmount += max(0, $qty * $unitPrice - $discount);
             }
 
+            $returnReasonCode = isset($linesOverride['return_reason_code']) ? \App\Enums\ReturnReasonCode::tryFrom($linesOverride['return_reason_code']) : null;
+            $reasonText = $linesOverride['reason'] ?? null;
             $saleReturn = SaleReturn::withoutGlobalScope('company')->create([
                 'sale_id' => $originalSale->id,
                 'company_id' => $creator->company_id,
@@ -259,7 +272,8 @@ class SaleService
                 'customer_id' => $originalSale->customer_id,
                 'refund_amount' => $refundAmount,
                 'status' => SaleReturnStatus::Completed,
-                'reason' => null,
+                'reason' => $reasonText,
+                'return_reason_code' => $reasonCodeEnum,
                 'created_by' => $creator->id,
             ]);
             $this->assignReturnNumber($saleReturn);
@@ -320,6 +334,9 @@ class SaleService
             $this->logAudit($originalSale->id, SaleAuditLog::EVENT_RETURN_CREATED, null, SaleReturnStatus::Completed->value, null, null, $metadata, $creator->id);
 
             $this->paymentService->postReturnPosting($originalSale, $saleReturn, $creator);
+            if ($saleReturn->customer_id) {
+                $this->customerLedgerService->postReturnCredit($saleReturn, $creator);
+            }
 
             return $saleReturn->load(['items.product', 'items.stockMovement', 'sale', 'branch', 'warehouse']);
         });
@@ -377,7 +394,7 @@ class SaleService
             'discount' => (float) $l->discount,
         ])->toArray();
 
-        return DB::transaction(function () use ($sale, $creator, $warehouseId, $linesData) {
+        return $this->transactionWithRetry(function () use ($sale, $creator, $warehouseId, $linesData) {
             $productIds = $sale->lines->pluck('product_id')->unique()->values()->all();
             if (! empty($productIds)) {
                 StockCache::where('warehouse_id', $warehouseId)->whereIn('product_id', $productIds)->lockForUpdate()->get();
@@ -416,6 +433,9 @@ class SaleService
             $this->logAudit($sale->id, SaleAuditLog::EVENT_CONVERTED_TO_SALE, SaleStatus::Draft->value, SaleStatus::Completed->value, SaleType::Sale->value, SaleType::Sale->value, $metadata, $creator->id);
 
             $this->paymentService->postSalePosting($sale->fresh(), $creator);
+            if ($sale->customer_id) {
+                $this->customerLedgerService->postInvoice($sale->fresh(), $creator);
+            }
 
             return $sale->fresh(['lines.product', 'lines.stockMovement', 'branch', 'warehouse', 'discounts']);
         });
@@ -737,11 +757,15 @@ class SaleService
 
         $resolvedWarehouseId = (int) ($line['warehouse_id'] ?? $warehouseId);
 
-        SaleLine::withoutGlobalScope('company')->create([
+        $saleLine = SaleLine::withoutGlobalScope('company')->create([
             'sale_id' => $sale->id,
             'company_id' => $sale->company_id,
             'warehouse_id' => $resolvedWarehouseId,
             'product_id' => $productId,
+            'product_name_snapshot' => $product->name ?? null,
+            'sku_snapshot' => $product->sku ?? null,
+            'barcode_snapshot' => $product->barcode ?? null,
+            'tax_class_id_snapshot' => $product->tax_class_id ?? null,
             'variant_id' => $variantId ?: null,
             'quantity' => $quantity,
             'unit_price' => $unitPrice,
@@ -753,6 +777,22 @@ class SaleService
             'lot_number' => $line['lot_number'] ?? null,
             'imei_id' => $serialId,
         ]);
+
+        if ($saleType === SaleType::Quotation) {
+            SaleLineHistory::withoutGlobalScope('company')->create([
+                'sale_id' => $sale->id,
+                'sale_line_id' => $saleLine->id,
+                'company_id' => $sale->company_id,
+                'action' => SaleLineHistory::ACTION_ADDED,
+                'product_id' => $productId,
+                'variant_id' => $variantId ?: null,
+                'new_quantity' => $quantity,
+                'new_unit_price' => $unitPrice,
+                'new_discount' => $discount,
+                'changed_by' => $creator->id,
+                'changed_at' => now(),
+            ]);
+        }
     }
 
     private function ensureLineWarehousesBelongToBranch(int $branchId, array $lines, int $defaultWarehouseId): void
@@ -791,6 +831,32 @@ class SaleService
             ->count();
         $number = 'SAL-'.$year.'-'.str_pad((string) $seq, 6, '0', STR_PAD_LEFT);
         $sale->update(['number' => $number]);
+    }
+
+    private function enforcePosRequirements(array $data): void
+    {
+        if (config('pos.require_session') && empty($data['pos_session_id'])) {
+            throw new InvalidArgumentException('pos_session_id is required when POS session enforcement is enabled.');
+        }
+
+        if (config('pos.require_device_id') && empty($data['device_id'])) {
+            throw new InvalidArgumentException('device_id is required when POS device tracking is enabled.');
+        }
+
+        if (! empty($data['pos_session_id'])) {
+            $this->ensurePosSessionOpen((int) $data['pos_session_id']);
+        }
+    }
+
+    private function ensurePosSessionOpen(int $posSessionId): void
+    {
+        $session = \App\Models\PosSession::withoutGlobalScope('company')->find($posSessionId);
+        if (! $session) {
+            throw new InvalidArgumentException("POS session id {$posSessionId} not found.");
+        }
+        if ($session->status !== 'open') {
+            throw new InvalidArgumentException("POS session id {$posSessionId} is not open. Only open sessions can accept new transactions.");
+        }
     }
 
     /**

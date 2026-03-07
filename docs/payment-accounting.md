@@ -15,6 +15,7 @@ A fully tenant-aware, POS-integrated payment and accounting module. Handles mult
 | company_id    | bigint        | FK → companies.id                                                     |
 | branch_id     | bigint        | FK → branches.id; must equal sale.branch_id when sale_id is set      |
 | warehouse_id  | bigint        | FK → warehouses.id (optional)                                         |
+| pos_session_id| bigint        | FK → pos_sessions.id (optional). Links payment to POS session for cash management and shift reporting. |
 | amount        | decimal(15,2) | Total (sum of lines); negative for refund                             |
 | currency_id   | bigint        | FK → currencies.id (nullable; defaults from company)                  |
 | exchange_rate | decimal(18,8) | Rate vs base; default 1.00000000                                      |
@@ -114,6 +115,35 @@ A fully tenant-aware, POS-integrated payment and accounting module. Handles mult
 | amount   | decimal(15,2) | Part of payment allocated to invoice |
 | timestamps |             | created_at, updated_at               |
 
+### customer_ledger
+
+Customer-level ledger for **aging reports**, **credit control**, and **statements**. Tracks every debit (invoice) and credit (payment, refund, adjustment, credit) per customer. Used by ERP-style systems (e.g. SAP, Odoo) for receivables management.
+
+| Field           | Type          | Notes                                                                 |
+|-----------------|---------------|-----------------------------------------------------------------------|
+| id              | bigint        | PK                                                                   |
+| company_id      | bigint        | FK → companies.id                                                     |
+| customer_id     | bigint        | FK → customers.id                                                     |
+| type            | varchar(20)   | **invoice**, **payment**, **refund**, **adjustment**, **credit**      |
+| reference_type  | varchar(50)   | Sale, Payment, SaleReturn, etc.                                       |
+| reference_id    | bigint        | ID of source document                                                |
+| amount          | decimal(15,2) | **Signed:** + for debit (invoice), − for credit (payment/refund)      |
+| balance_after   | decimal(15,2) | Running balance after this entry                                      |
+| entry_date      | date          | Accounting date of the entry                                         |
+| description     | varchar(255)  | Optional (e.g. "Sale SAL-2026-00001", "Payment PAY-2026-00005")      |
+| created_by      | bigint        | FK → users.id (nullable)                                             |
+| timestamps      |               | created_at, updated_at                                               |
+
+**Indexes:** `(company_id, customer_id)`, `(customer_id, entry_date)`, `(reference_type, reference_id)`.
+
+**When entries are created (CustomerLedgerService):**
+
+- **invoice** — When a sale is completed and has `customer_id`. Amount = sale `grand_total` (positive). Increases customer balance.
+- **payment** — When a payment is completed and is linked to a sale with `customer_id` (or payment has `customer_id`). Amount = −payment amount. Decreases customer balance.
+- **refund** — When a payment is refunded (amount positive, decreases balance) or when a **SaleReturn** is completed (postReturnCredit; amount positive). Decreases receivable.
+
+**Use cases:** Aging (outstanding by bucket), credit limit checks, customer statement PDF, dispute resolution.
+
 ### sales (relevant columns for payment)
 
 | Field        | Type          | Notes                                                                 |
@@ -200,6 +230,10 @@ See **Due amount & paid amount (POS performance)** below.
 - Journal entries are immutable once `status = posted` and `is_locked = true`; corrections via adjustment or refund entries (new rows), never by editing existing ones. **Journal entries use soft deletes** for testing/dev; deletion is **never** allowed when the entry is posted or locked.
 - `payments` and `payment_lines` use soft deletes for safety; **only non-completed payments** can be soft-deleted. Completed payments cannot be deleted; they should be reversed via refund or marked with status `cancelled` if never actually processed.
 - **payment_date:** Optional on create; defaults to current date. Use for backdated posting (e.g. payment created tomorrow but recorded for yesterday). List filters `date_from` / `date_to` prefer `payment_date` when set, falling back to `created_at` for legacy rows.
+- **POS session validation:** When `pos_session_id` is provided, PaymentService validates session exists and is `open`. When `POS_REQUIRE_SESSION` is enabled (see `config/pos.php`), all payments must include `pos_session_id`.
+- **Deadlock retry:** PaymentService uses `RetryOnDeadlock` trait — all transactions are wrapped with exponential back-off (up to 3 retries) on MySQL deadlock (SQLSTATE 40001). Critical for high-concurrency POS environments where multiple terminals may pay the same sale simultaneously.
+- **Exchange rate at transaction time:** `payments.exchange_rate` captures the rate when the payment is created. Historical rates are never updated. Use `CurrencyRounding` for consistent banker's rounding across monetary calculations.
+- **Sale adjustments:** Corrections on completed sales use `sale_adjustments` (not direct edits). Adjustment journal entries reference `SaleAdjustment` and require four-eyes approval. See [Sales Engine](sales-customer-engine.md#sale-adjustments-admin-override).
 
 ## API (Vue.js ready)
 
@@ -268,7 +302,9 @@ Run: `php artisan migrate --seed` or `php artisan db:seed`.
 
 - **Payment number:** Unique constraint `(company_id, payment_number)` on `payments` ensures no duplicate numbers per company.
 - **Due amount:** Cached `paid_amount` and `due_amount` on `sales` avoid `SUM(payments)` on every read; updated when payments are completed or refunded. Essential for fast POS list and detail views.
+- **Deadlock recovery:** `RetryOnDeadlock` trait ensures transient deadlocks in high-concurrency payment flows are retried transparently (up to 3 attempts, exponential back-off starting at 50ms).
 - Indexes on payments: sale_id, company_id, branch_id, status, created_at, customer_id, payment_date.
 - Indexes on journal_entries: company_id, reference_type, reference_id, entry_type, posted_at, branch_id.
 - Indexes on journal_entry_lines: journal_entry_id, account_id, customer_id, supplier_id.
 - For high volume, consider cached balance totals or materialized views; batch journal entry inserts if processing bulk payments and reporting on account or customer balances.
+- **Future:** For extreme-scale POS, consider async payment/refund queue to reduce lock contention (see Sales Engine future improvements).

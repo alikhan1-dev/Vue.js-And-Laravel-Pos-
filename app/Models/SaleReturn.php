@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\ReturnReasonCode;
 use App\Enums\SaleReturnStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -27,6 +28,7 @@ class SaleReturn extends Model
         'refund_amount',
         'status',
         'reason',
+        'return_reason_code',
         'created_by',
     ];
 
@@ -35,6 +37,7 @@ class SaleReturn extends Model
         return [
             'refund_amount' => 'decimal:2',
             'status' => SaleReturnStatus::class,
+            'return_reason_code' => ReturnReasonCode::class.':nullable',
         ];
     }
 

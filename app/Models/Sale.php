@@ -43,6 +43,8 @@ class Sale extends Model
         'notes',
         'created_by',
         'updated_by',
+        'device_id',
+        'pos_session_id',
     ];
 
     protected function casts(): array
@@ -67,6 +69,22 @@ class Sale extends Model
         static::creating(function (Sale $sale): void {
             if (empty($sale->uuid)) {
                 $sale->uuid = (string) Str::uuid();
+            }
+        });
+
+        // Only draft sales can be soft-deleted. Completed/refunded/cancelled must remain for reporting.
+        static::deleting(function (Sale $sale): void {
+            if ($sale->status !== SaleStatus::Draft) {
+                throw new \InvalidArgumentException('Only draft sales can be deleted. Completed, refunded, or cancelled sales must be retained for reporting.');
+            }
+        });
+
+        // Prevent exchange rate or currency changes on completed sales.
+        static::updating(function (Sale $sale): void {
+            if ($sale->getOriginal('status') === SaleStatus::Completed->value || $sale->getOriginal('status') === SaleStatus::Completed) {
+                if ($sale->isDirty('exchange_rate') || $sale->isDirty('currency')) {
+                    throw new \InvalidArgumentException('Exchange rate and currency cannot be changed on completed sales. Historical rates must be preserved.');
+                }
             }
         });
 
@@ -120,9 +138,29 @@ class Sale extends Model
         return $this->hasMany(SaleReturn::class);
     }
 
+    public function posSession(): BelongsTo
+    {
+        return $this->belongsTo(PosSession::class, 'pos_session_id');
+    }
+
+    public function saleTaxes(): HasMany
+    {
+        return $this->hasMany(SaleTax::class);
+    }
+
     public function auditLogs(): HasMany
     {
         return $this->hasMany(SaleAuditLog::class);
+    }
+
+    public function lineHistory(): HasMany
+    {
+        return $this->hasMany(SaleLineHistory::class);
+    }
+
+    public function adjustments(): HasMany
+    {
+        return $this->hasMany(SaleAdjustment::class);
     }
 
     public function payments(): HasMany

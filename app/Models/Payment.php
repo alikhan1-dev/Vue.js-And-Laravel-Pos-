@@ -24,6 +24,7 @@ class Payment extends Model
         'company_id',
         'branch_id',
         'warehouse_id',
+        'pos_session_id',
         'amount',
         'currency_id',
         'exchange_rate',
@@ -122,6 +123,11 @@ class Payment extends Model
     public function lines(): HasMany
     {
         return $this->hasMany(PaymentLine::class);
+    }
+
+    public function posSession(): BelongsTo
+    {
+        return $this->belongsTo(PosSession::class, 'pos_session_id');
     }
 
     public function journalEntries(): HasMany

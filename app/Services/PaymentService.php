@@ -13,11 +13,14 @@ use App\Models\PaymentMethod;
 use App\Models\Sale;
 use App\Models\SaleReturn;
 use App\Models\User;
+use App\Support\RetryOnDeadlock;
+use App\Services\CustomerLedgerService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class PaymentService
 {
+    use RetryOnDeadlock;
     private const AMOUNT_MIN = 0.01;
     private const AMOUNT_MAX = 999_999_999.99;
 
@@ -38,6 +41,19 @@ class PaymentService
             $this->ensureWarehouseBelongsToCompany($creator->company_id, $warehouseId);
         }
 
+        if (config('pos.require_session') && empty($data['pos_session_id'])) {
+            throw new InvalidArgumentException('pos_session_id is required when POS session enforcement is enabled.');
+        }
+        if (! empty($data['pos_session_id'])) {
+            $posSession = \App\Models\PosSession::withoutGlobalScope('company')->find((int) $data['pos_session_id']);
+            if (! $posSession) {
+                throw new InvalidArgumentException("POS session id {$data['pos_session_id']} not found.");
+            }
+            if ($posSession->status !== 'open') {
+                throw new InvalidArgumentException("POS session id {$data['pos_session_id']} is not open. Only open sessions can accept payments.");
+            }
+        }
+
         $totalAmount = 0;
         foreach ($lines as $line) {
             $amt = (float) ($line['amount'] ?? 0);
@@ -48,7 +64,7 @@ class PaymentService
             throw new InvalidArgumentException('Payment total must be at least ' . self::AMOUNT_MIN . '.');
         }
 
-        return DB::transaction(function () use ($data, $creator, $saleId, $branchId, $warehouseId, $lines, $totalAmount, $status) {
+        return $this->transactionWithRetry(function () use ($data, $creator, $saleId, $branchId, $warehouseId, $lines, $totalAmount, $status) {
             $sale = null;
             $customerId = null;
             $saleNumber = null;
@@ -79,6 +95,7 @@ class PaymentService
                 'company_id' => $creator->company_id,
                 'branch_id' => $branchId,
                 'warehouse_id' => $warehouseId,
+                'pos_session_id' => $data['pos_session_id'] ?? null,
                 'amount' => $totalAmount,
                 'currency_id' => $data['currency_id'] ?? null,
                 'exchange_rate' => $data['exchange_rate'] ?? 1,
@@ -185,7 +202,7 @@ class PaymentService
             ->where('id', $accountId)->where('is_active', true)->firstOrFail();
         $salesReturnsAccount = $this->getSalesReturnsAccount($companyId);
 
-        return DB::transaction(function () use ($payment, $amount, $account, $salesReturnsAccount, $creator) {
+        return $this->transactionWithRetry(function () use ($payment, $amount, $account, $salesReturnsAccount, $creator) {
             $refundPayment = Payment::withoutGlobalScope('company')->create([
                 'sale_id' => $payment->sale_id,
                 'customer_id' => $payment->customer_id,
@@ -233,6 +250,9 @@ class PaymentService
                         'payment_status' => SalePaymentStatus::fromPaidAndTotal($paid, $total),
                     ]);
                 }
+            }
+            if ($payment->customer_id) {
+                app(CustomerLedgerService::class)->postRefund($payment, $amount, $creator);
             }
 
             return $refundPayment->load([

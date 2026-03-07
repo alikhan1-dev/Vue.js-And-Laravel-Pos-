@@ -67,6 +67,8 @@ class SaleController extends Controller
             'discounts.*.type' => ['nullable', 'string', 'in:percentage,fixed,promotion,coupon,manual'],
             'discounts.*.value' => ['required_with:discounts', 'numeric', 'min:0'],
             'discounts.*.description' => ['nullable', 'string', 'max:255'],
+            'device_id' => ['nullable', 'string', 'max:100'],
+            'pos_session_id' => ['nullable', 'integer', 'exists:pos_sessions,id'],
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.product_id' => ['required', 'integer'],
             'lines.*.quantity' => ['required', 'numeric', 'min:0.01'],
@@ -187,16 +189,25 @@ class SaleController extends Controller
     public function returnSale(Request $request, int $id): JsonResponse
     {
         $sale = Sale::findOrFail($id);
-        $linesOverride = $request->validate([
+        $validated = $request->validate([
             'lines' => ['nullable', 'array'],
             'lines.*.product_id' => ['required_with:lines', 'integer'],
             'lines.*.quantity' => ['required_with:lines', 'numeric', 'min:0.01'],
             'lines.*.unit_price' => ['required_with:lines', 'numeric', 'min:0'],
             'lines.*.discount' => ['nullable', 'numeric', 'min:0'],
-        ])['lines'] ?? null;
+            'return_reason_code' => ['nullable', 'string', 'in:damaged,customer_return,wrong_item,warranty,fraud,other'],
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+        $linesOverride = $validated['lines'] ?? null;
 
         try {
-            $returnSale = $this->saleService->createReturn($sale, $linesOverride, $request->user());
+            $returnSale = $this->saleService->createReturn(
+                $sale,
+                $linesOverride,
+                $request->user(),
+                $validated['return_reason_code'] ?? null,
+                $validated['reason'] ?? null
+            );
             return response()->json($returnSale, 201);
         } catch (InvalidArgumentException $e) {
             return response()->json([
