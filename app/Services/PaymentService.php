@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\PaymentStatus;
+use App\Enums\SalePaymentStatus;
 use App\Models\Account;
 use App\Models\JournalEntry;
 use App\Models\JournalEntryLine;
@@ -10,6 +11,7 @@ use App\Models\Payment;
 use App\Models\PaymentLine;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
+use App\Models\SaleReturn;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -145,7 +147,12 @@ class PaymentService
             if ($status === PaymentStatus::Completed && $saleId && $totalAmount > 0) {
                 $sale->increment('paid_amount', $totalAmount);
                 $sale->refresh();
-                $sale->update(['due_amount' => max(0, (float) $sale->total - (float) $sale->paid_amount)]);
+                $dueAmount = max(0, (float) $sale->total - (float) $sale->paid_amount);
+                $paymentStatus = SalePaymentStatus::fromPaidAndTotal((float) $sale->paid_amount, (float) $sale->total ?: (float) $sale->grand_total);
+                $sale->update([
+                    'due_amount' => $dueAmount,
+                    'payment_status' => $paymentStatus,
+                ]);
             }
 
             return $payment->load([
@@ -219,7 +226,12 @@ class PaymentService
                     ->decrement('paid_amount', $amount);
                 $originalSale = Sale::withoutGlobalScope('company')->find($payment->sale_id);
                 if ($originalSale) {
-                    $originalSale->update(['due_amount' => max(0, (float) $originalSale->total - (float) $originalSale->paid_amount)]);
+                    $total = (float) $originalSale->total ?: (float) $originalSale->grand_total;
+                    $paid = (float) $originalSale->paid_amount;
+                    $originalSale->update([
+                        'due_amount' => max(0, $total - $paid),
+                        'payment_status' => SalePaymentStatus::fromPaidAndTotal($paid, $total),
+                    ]);
                 }
             }
 
@@ -328,28 +340,29 @@ class PaymentService
     /**
      * Post accrual for goods returned (before any cash refund): Dr Sales Returns, Cr Accounts Receivable.
      */
-    public function postReturnPosting(Sale $originalSale, Sale $returnSale, User $creator): void
+    public function postReturnPosting(Sale $originalSale, SaleReturn $saleReturn, User $creator): void
     {
         $receivable = $this->getAccountsReceivableAccount($originalSale->company_id);
         $salesReturns = $this->getSalesReturnsAccount($originalSale->company_id);
+        $amount = (float) $saleReturn->refund_amount;
 
         $this->createBalancedJournalEntry(
             companyId: $originalSale->company_id,
-            branchId: $returnSale->branch_id,
-            referenceType: JournalEntry::REFERENCE_TYPE_SALE,
-            referenceId: $returnSale->id,
-            referenceNumber: $returnSale->number,
+            branchId: $saleReturn->branch_id,
+            referenceType: JournalEntry::REFERENCE_TYPE_SALE_RETURN,
+            referenceId: $saleReturn->id,
+            referenceNumber: $saleReturn->return_number ?? 'SR-' . $saleReturn->id,
             entryType: JournalEntry::ENTRY_TYPE_REFUND,
             createdBy: $creator->id,
             debitLines: [[
                 'account_id' => $salesReturns->id,
-                'amount' => (float) $returnSale->total,
-                'description' => 'Return posting for sale #' . $originalSale->id,
+                'amount' => $amount,
+                'description' => 'Return posting for sale #' . $originalSale->id . ' (SaleReturn #' . $saleReturn->id . ')',
             ]],
             creditLines: [[
                 'account_id' => $receivable->id,
-                'amount' => (float) $returnSale->total,
-                'description' => 'Return posting for sale #' . $originalSale->id,
+                'amount' => $amount,
+                'description' => 'Return posting for sale #' . $originalSale->id . ' (SaleReturn #' . $saleReturn->id . ')',
             ]],
         );
     }

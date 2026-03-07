@@ -2,13 +2,12 @@
 
 namespace App\Enums;
 
-enum SaleStatus: string
+enum SupplierPaymentStatus: string
 {
-    case Draft = 'draft';
     case Pending = 'pending';
     case Completed = 'completed';
+    case Failed = 'failed';
     case Cancelled = 'cancelled';
-    case Refunded = 'refunded';
 
     public static function values(): array
     {

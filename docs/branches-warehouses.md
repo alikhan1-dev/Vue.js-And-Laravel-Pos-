@@ -356,23 +356,23 @@ So: **users only see branches and warehouses of their company**; global scopes e
 
 All branch/warehouse endpoints require a Bearer token (login first).
 
-1. **Login**
-   - **POST** `http://127.0.0.1:8000/api/auth/login`
-   - Body (raw JSON): `{"email":"admin@company.test","password":"password"}`
+1. **Login**  
+   - **POST** `http://127.0.0.1:8000/api/auth/login`  
+   - Body (raw JSON): `{"email":"admin@company.test","password":"password"}`  
    - Copy the `token` from the response.
 
-2. **Get current user**
-   - **GET** `http://127.0.0.1:8000/api/user`
-   - **Authorization** tab → Type: **Bearer Token** → paste the token.
+2. **Get current user**  
+   - **GET** `http://127.0.0.1:8000/api/user`  
+   - **Authorization** tab → Type: **Bearer Token** → paste the token.  
    - You should see the authenticated user (and their company).
 
-3. **List branches (tenant-scoped)**
+3. **List branches (tenant-scoped)**  
    - **GET** `http://127.00.0.1:8000/api/branches`
    - Same **Authorization** → Bearer Token.
    - You should see only branches of your company (e.g. `Head Office` with code `HO`, and any additional branches you created).
 
-4. **List warehouses (tenant-scoped)**
-   - **GET** `http://127.0.0.1:8000/api/warehouses`
+4. **List warehouses (tenant-scoped)**  
+   - **GET** `http://127.0.0.1:8000/api/warehouses`  
    - Same **Authorization** → Bearer Token.
    - You should see only warehouses of your company (e.g. `Main Warehouse` with code `MAIN` and its branch).
 

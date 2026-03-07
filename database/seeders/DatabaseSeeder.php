@@ -414,38 +414,38 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
-        $returnSale = Sale::withoutGlobalScope('company')->firstOrCreate(
+        // Sale return (dedicated sale_returns table)
+        $saleReturn = \App\Models\SaleReturn::withoutGlobalScope('company')->firstOrCreate(
             [
+                'sale_id' => $completedSale->id,
                 'company_id' => $company->id,
-                'branch_id' => $branch->id,
-                'warehouse_id' => $warehouse->id,
-                'type' => SaleType::Return,
-                'status' => SaleStatus::Completed,
-                'return_for_sale_id' => $completedSale->id,
             ],
             [
-                'total' => 199.98,
+                'branch_id' => $branch->id,
+                'warehouse_id' => $warehouse->id,
+                'customer_id' => null,
+                'refund_amount' => 199.98,
+                'status' => \App\Enums\SaleReturnStatus::Completed,
                 'created_by' => $superAdmin->id,
             ]
         );
 
-        if (! $returnSale->lines()->exists()) {
+        if (! $saleReturn->items()->exists()) {
             $returnMovement = StockMovement::withoutGlobalScope('company')->create([
                 'product_id' => $product->id,
                 'warehouse_id' => $warehouse->id,
                 'quantity' => 2,
-                'type' => StockMovementType::PurchaseIn,
+                'type' => StockMovementType::ReturnIn,
                 'reference_type' => 'SaleReturn',
-                'reference_id' => $returnSale->id,
+                'reference_id' => $saleReturn->id,
                 'created_by' => $superAdmin->id,
             ]);
-            SaleLine::withoutGlobalScope('company')->create([
-                'sale_id' => $returnSale->id,
+            \App\Models\SaleReturnItem::withoutGlobalScope('company')->create([
+                'sale_return_id' => $saleReturn->id,
                 'product_id' => $product->id,
                 'quantity' => 2,
                 'unit_price' => 99.99,
-                'discount' => 0,
-                'subtotal' => 199.98,
+                'total' => 199.98,
                 'stock_movement_id' => $returnMovement->id,
             ]);
         }
@@ -470,6 +470,18 @@ class DatabaseSeeder extends Seeder
         $returnsAccount = Account::firstOrCreate(
             ['company_id' => $company->id, 'code' => '5000'],
             ['name' => 'Sales Returns', 'type' => AccountType::ContraIncome, 'parent_id' => null, 'is_active' => true],
+        );
+        Account::firstOrCreate(
+            ['company_id' => $company->id, 'code' => '1200'],
+            ['name' => 'Inventory', 'type' => AccountType::Asset, 'parent_id' => null, 'is_active' => true],
+        );
+        Account::firstOrCreate(
+            ['company_id' => $company->id, 'code' => '2000'],
+            ['name' => 'Accounts Payable', 'type' => AccountType::Liability, 'parent_id' => null, 'is_active' => true],
+        );
+        Account::firstOrCreate(
+            ['company_id' => $company->id, 'code' => '2100'],
+            ['name' => 'Goods Received Not Invoiced (GRNI)', 'type' => AccountType::Liability, 'parent_id' => null, 'is_active' => true],
         );
 
         // Default payment methods

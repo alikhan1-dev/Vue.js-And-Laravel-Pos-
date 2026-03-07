@@ -2,10 +2,11 @@
 
 namespace App\Enums;
 
-enum SaleType: string
+enum CustomerStatus: string
 {
-    case Sale = 'sale';
-    case Quotation = 'quotation';
+    case Active = 'active';
+    case Inactive = 'inactive';
+    case Blocked = 'blocked';
 
     public static function values(): array
     {

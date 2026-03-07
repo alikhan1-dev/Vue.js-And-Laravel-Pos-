@@ -58,8 +58,15 @@ class SaleController extends Controller
             'warehouse_id' => ['required', 'integer'],
             'customer_id' => ['nullable', 'integer'],
             'type' => ['required', 'string', 'in:sale,quotation'],
+            'status' => ['nullable', 'string', 'in:draft'],
             'currency' => ['nullable', 'string', 'max:10'],
             'exchange_rate' => ['nullable', 'numeric', 'min:0.000001'],
+            'notes' => ['nullable', 'string'],
+            'tax_total' => ['nullable', 'numeric', 'min:0'],
+            'discounts' => ['nullable', 'array'],
+            'discounts.*.type' => ['nullable', 'string', 'in:percentage,fixed,promotion,coupon,manual'],
+            'discounts.*.value' => ['required_with:discounts', 'numeric', 'min:0'],
+            'discounts.*.description' => ['nullable', 'string', 'max:255'],
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.product_id' => ['required', 'integer'],
             'lines.*.quantity' => ['required', 'numeric', 'min:0.01'],
@@ -134,6 +141,42 @@ class SaleController extends Controller
                 'errors' => [
                     'sale' => [$e->getMessage()],
                 ],
+            ], 422);
+        }
+    }
+
+    /**
+     * Cancel a sale. Allowed only for draft or pending. Completed sales must use returns/refunds.
+     */
+    public function cancel(Request $request, int $id): JsonResponse
+    {
+        $sale = Sale::findOrFail($id);
+
+        try {
+            $sale = $this->saleService->cancel($sale, $request->user());
+            return response()->json($sale);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => 'Sale validation failed.',
+                'errors' => ['sale' => [$e->getMessage()]],
+            ], 422);
+        }
+    }
+
+    /**
+     * Complete a draft sale (POS checkout): validate stock, create movements, post accounting.
+     */
+    public function complete(Request $request, int $id): JsonResponse
+    {
+        $sale = Sale::findOrFail($id);
+
+        try {
+            $sale = $this->saleService->complete($sale, $request->user());
+            return response()->json($sale);
+        } catch (InvalidArgumentException $e) {
+            return response()->json([
+                'message' => 'Sale validation failed.',
+                'errors' => ['sale' => [$e->getMessage()]],
             ], 422);
         }
     }

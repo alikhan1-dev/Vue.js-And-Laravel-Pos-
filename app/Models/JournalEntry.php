@@ -19,13 +19,21 @@ class JournalEntry extends Model
 {
     use SoftDeletes;
     public const REFERENCE_TYPE_SALE = 'Sale';
+    public const REFERENCE_TYPE_SALE_RETURN = 'SaleReturn';
     public const REFERENCE_TYPE_PAYMENT = 'Payment';
     public const REFERENCE_TYPE_ADJUSTMENT = 'Adjustment';
+    public const REFERENCE_TYPE_PURCHASE = 'Purchase';
+    public const REFERENCE_TYPE_GOODS_RECEIPT = 'GoodsReceipt';
+    public const REFERENCE_TYPE_SUPPLIER_INVOICE = 'SupplierInvoice';
+    public const REFERENCE_TYPE_SUPPLIER_PAYMENT = 'SupplierPayment';
 
     public const ENTRY_TYPE_SALE_POSTING = 'sale_posting';
     public const ENTRY_TYPE_PAYMENT_RECEIPT = 'payment_receipt';
     public const ENTRY_TYPE_REFUND = 'refund';
     public const ENTRY_TYPE_ADJUSTMENT = 'adjustment';
+    public const ENTRY_TYPE_GOODS_RECEIPT = 'goods_receipt';
+    public const ENTRY_TYPE_PURCHASE_INVOICE = 'purchase_invoice';
+    public const ENTRY_TYPE_SUPPLIER_PAYMENT = 'supplier_payment';
 
     protected $fillable = [
         'company_id',

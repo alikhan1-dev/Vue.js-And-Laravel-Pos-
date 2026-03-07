@@ -13,6 +13,7 @@ A **multi-tenant POS and ERP system** built from scratch. The backend is **PHP L
 - **Warranty & serials:** Warranty registrations linked to sales; serial/IMEI handling for returns and claims.
 - **Payments & accounting:** Double-entry journal engine (`journal_entries` + `journal_entry_lines`) with per-branch journal entries, human-readable JE numbers (e.g. `JE-2026-00001`), and document reference numbers (e.g. `INV-2026-0001`, `PAY-2026-00005`).
 - **POS-friendly due amounts:** Cached `paid_amount` and `due_amount` on `sales` so the POS can show “amount paid” / “amount due” without running `SUM(payments)` on every request.
+- **Purchase & supplier engine:** Suppliers, purchase orders, goods receipts (partial shipments), supplier invoices, and supplier payments. Inventory increases on receipt; accounting entries for invoice posting and payments.
 - **Documentation:** Step-by-step architecture and API docs in the `docs/` folder.
 
 ---
@@ -45,7 +46,8 @@ A **multi-tenant POS and ERP system** built from scratch. The backend is **PHP L
 │   ├── branches-warehouses.md  # Step 2: Branches & warehouses schema and rules
 │   ├── inventory-movements.md  # Step 3: Inventory engine
 │   ├── sales-quotations.md     # Step 4: POS sales, quotations, returns
-│   └── payment-accounting.md   # Payments & accounting
+│   ├── payment-accounting.md   # Step 5: Payments & accounting
+│   └── purchase-supplier-engine.md # Step 7: Purchase & supplier engine
 ├── routes/
 │   └── api.php                 # API routes (auth, sales, stock movements, etc.)
 └── README.md                   # This file
@@ -62,6 +64,7 @@ A **multi-tenant POS and ERP system** built from scratch. The backend is **PHP L
 | [inventory-movements.md](docs/inventory-movements.md) | Stock movements, stock cache, reservations, inventory journal, alerts |
 | [sales-quotations.md](docs/sales-quotations.md) | Sales, quotations, returns, reservations, return_in, validation, audit log, API |
 | [payment-accounting.md](docs/payment-accounting.md) | Step 5: Payments, cached due amounts, and double-entry accounting (journal entries, branch reporting, JE numbers) |
+| [purchase-supplier-engine.md](docs/purchase-supplier-engine.md) | Step 7: Suppliers, purchase orders, goods receipts, supplier invoices, supplier payments, inventory and accounting integration |
 
 ---
 
@@ -139,6 +142,16 @@ Use `POST /api/auth/login` with JSON body `{"email":"admin@company.test","passwo
 | GET | `/api/sales/{id}/stock-check` | Current stock per line (all_sufficient, per-line sufficient) |
 | GET | `/api/stock-movements` | List stock movements (filter: product_id, warehouse_id, type) |
 | POST | `/api/stock-movements` | Create stock movement (with optional idempotency_key) |
+| GET | `/api/suppliers` | List suppliers |
+| POST | `/api/suppliers` | Create supplier |
+| GET | `/api/purchases` | List purchases (filter: supplier_id, status, branch_id, date_from, date_to) |
+| POST | `/api/purchases` | Create purchase order |
+| GET | `/api/purchases/{id}` | Purchase detail |
+| POST | `/api/purchases/{id}/receive` | Receive goods (partial or full) |
+| GET | `/api/supplier-invoices` | List supplier invoices |
+| POST | `/api/supplier-invoices` | Create supplier invoice |
+| POST | `/api/supplier-invoices/{id}/post` | Post invoice (Dr Inventory, Cr AP) |
+| POST | `/api/supplier-payments` | Create supplier payment |
 
 All API endpoints (except login/register) require: `Authorization: Bearer <token>`.
 

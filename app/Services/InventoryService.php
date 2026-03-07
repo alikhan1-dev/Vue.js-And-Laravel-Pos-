@@ -22,10 +22,11 @@ class InventoryService
 
     /**
      * Record purchase receipt (stock received from supplier).
+     * referenceType/referenceId optional (e.g. GoodsReceipt, receipt id) for traceability.
      */
-    public function purchase(int $productId, int $warehouseId, float $quantity, ?float $unitCost = null, ?int $variantId = null, ?int $batchId = null, ?User $user = null): StockMovement
+    public function purchase(int $productId, int $warehouseId, float $quantity, ?float $unitCost = null, ?int $variantId = null, ?int $batchId = null, ?User $user = null, ?string $referenceType = 'Purchase', ?int $referenceId = null): StockMovement
     {
-        return $this->recordInMovement(StockMovementType::PurchaseIn, $productId, $warehouseId, $quantity, $unitCost, $variantId, $batchId, null, 'Purchase', null, $user);
+        return $this->recordInMovement(StockMovementType::PurchaseIn, $productId, $warehouseId, $quantity, $unitCost, $variantId, $batchId, null, $referenceType, $referenceId, $user);
     }
 
     /**

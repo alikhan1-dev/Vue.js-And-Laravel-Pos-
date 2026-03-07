@@ -17,11 +17,13 @@ class SaleLine extends Model
 
     protected $fillable = [
         'sale_id',
+        'company_id',
         'warehouse_id',
         'product_id',
         'variant_id',
         'quantity',
         'unit_price',
+        'cost_price_at_sale',
         'line_total',
         'discount',
         'subtotal',
@@ -36,6 +38,7 @@ class SaleLine extends Model
         return [
             'quantity' => 'decimal:2',
             'unit_price' => 'decimal:2',
+            'cost_price_at_sale' => 'decimal:4',
             'line_total' => 'decimal:2',
             'discount' => 'decimal:2',
             'subtotal' => 'decimal:2',
@@ -49,7 +52,10 @@ class SaleLine extends Model
                 return;
             }
             if (auth()->check()) {
-                $builder->whereHas('sale', fn (Builder $q) => $q->where('company_id', auth()->user()->company_id));
+                $builder->where(function (Builder $q) {
+                    $q->where('company_id', auth()->user()->company_id)
+                        ->orWhereHas('sale', fn (Builder $s) => $s->where('company_id', auth()->user()->company_id));
+                });
             }
         });
     }

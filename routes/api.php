@@ -18,6 +18,11 @@ use App\Http\Controllers\Api\UnitController;
 use App\Http\Controllers\Api\WarehouseStockController;
 use App\Http\Controllers\Api\WarrantyLookupController;
 use App\Http\Controllers\Api\WarrantyClaimController;
+use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\SupplierController;
+use App\Http\Controllers\Api\PurchaseController;
+use App\Http\Controllers\Api\SupplierInvoiceController;
+use App\Http\Controllers\Api\SupplierPaymentController;
 
 Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/user', function (Request $request) {
@@ -59,11 +64,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/sales/{id}', [SaleController::class, 'show']);
     Route::post('/sales/{id}/convert', [SaleController::class, 'convert']);
     Route::post('/sales/{id}/return', [SaleController::class, 'returnSale']);
+    Route::post('/sales/{id}/complete', [SaleController::class, 'complete']);
+    Route::post('/sales/{id}/cancel', [SaleController::class, 'cancel']);
     Route::get('/sales/{id}/stock-check', [SaleController::class, 'stockCheck']);
+
+    // Customers (Sales & Customer Engine)
+    Route::get('/customers', [CustomerController::class, 'index']);
+    Route::post('/customers', [CustomerController::class, 'store']);
+    Route::get('/customers/{id}/warranties', [WarrantyLookupController::class, 'customerWarranties']);
+    Route::get('/customers/{id}', [CustomerController::class, 'show']);
+    Route::put('/customers/{id}', [CustomerController::class, 'update']);
 
     // Warranty management
     Route::get('/warranty/lookup', [WarrantyLookupController::class, 'lookup']);
-    Route::get('/customers/{id}/warranties', [WarrantyLookupController::class, 'customerWarranties']);
     Route::get('/warranty-claims', [WarrantyClaimController::class, 'index']);
     Route::post('/warranty-claims', [WarrantyClaimController::class, 'store']);
     Route::put('/warranty-claims/{id}', [WarrantyClaimController::class, 'update']);
@@ -79,6 +92,20 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/payments', [PaymentController::class, 'store']);
     Route::get('/payments/{id}', [PaymentController::class, 'show']);
     Route::post('/payments/{id}/refund', [PaymentController::class, 'refund']);
+
+    // Purchase & Supplier Engine (Step 7)
+    Route::get('/suppliers', [SupplierController::class, 'index']);
+    Route::post('/suppliers', [SupplierController::class, 'store']);
+    Route::get('/purchases', [PurchaseController::class, 'index']);
+    Route::post('/purchases', [PurchaseController::class, 'store']);
+    Route::get('/purchases/{id}', [PurchaseController::class, 'show']);
+    Route::post('/purchases/{id}/confirm', [PurchaseController::class, 'confirm']);
+    Route::post('/purchases/{id}/mark-ordered', [PurchaseController::class, 'markOrdered']);
+    Route::post('/purchases/{id}/receive', [PurchaseController::class, 'receive']);
+    Route::get('/supplier-invoices', [SupplierInvoiceController::class, 'index']);
+    Route::post('/supplier-invoices', [SupplierInvoiceController::class, 'store']);
+    Route::post('/supplier-invoices/{id}/post', [SupplierInvoiceController::class, 'post']);
+    Route::post('/supplier-payments', [SupplierPaymentController::class, 'store']);
 });
 
 Route::prefix('auth')->group(function () {
