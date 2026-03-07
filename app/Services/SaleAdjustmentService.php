@@ -51,7 +51,7 @@ class SaleAdjustmentService
 
         SaleAuditLog::create([
             'sale_id' => $sale->id,
-            'event' => 'adjustment_created',
+            'event' => SaleAuditLog::EVENT_ADJUSTMENT_CREATED,
             'from_status' => $sale->status->value,
             'to_status' => $sale->status->value,
             'metadata' => [
@@ -134,7 +134,7 @@ class SaleAdjustmentService
 
             SaleAuditLog::create([
                 'sale_id' => $sale->id,
-                'event' => 'adjustment_approved',
+                'event' => SaleAuditLog::EVENT_ADJUSTMENT_APPROVED,
                 'from_status' => $sale->status->value,
                 'to_status' => $sale->status->value,
                 'metadata' => [

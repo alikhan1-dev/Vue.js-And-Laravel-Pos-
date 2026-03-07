@@ -26,6 +26,10 @@ class SaleAuditLog extends Model
 
     public const EVENT_STATUS_CHANGED = 'status_changed';
 
+    public const EVENT_ADJUSTMENT_CREATED = 'adjustment_created';
+
+    public const EVENT_ADJUSTMENT_APPROVED = 'adjustment_approved';
+
     protected $table = 'sale_audit_log';
 
     public $timestamps = false;

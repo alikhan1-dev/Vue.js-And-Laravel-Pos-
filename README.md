@@ -258,6 +258,36 @@ All endpoints below (except auth) require: `Authorization: Bearer <token>`.
 
 ---
 
+## API testing
+
+### Smoke test (recommended)
+
+A full API smoke test hits every endpoint in order (auth → master data → sales → payments → purchase/suppliers). **The API server must be running.**
+
+1. Start the server (in one terminal):
+   ```bash
+   php artisan serve
+   ```
+2. Run the smoke test (in another terminal):
+   ```bash
+   php artisan api:smoke-test
+   ```
+   Optional: `--base-url=http://localhost:8000` if different; `--show-errors` to print response body on failure.
+
+3. Expected: **Passed: 28+, Failed: 0, Skipped: 0–2**. If any fail, check `storage/logs/laravel.log` for the exception. Some endpoints may be skipped when seeded data doesn’t include related records (e.g. warranty lookup when there are no warranty registrations).
+
+### PHPUnit feature tests
+
+The project includes a comprehensive API test suite in `tests/Feature/Api/FullApiTest.php`. It uses `RefreshDatabase` and the `DatabaseSeeder` to test each endpoint. Run it with:
+
+```bash
+php artisan test tests/Feature/Api/FullApiTest.php
+```
+
+If PHPUnit fails to run (e.g. class not found), use the smoke test above instead.
+
+---
+
 ## Configuration
 
 - **`config/pos.php`**

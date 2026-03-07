@@ -21,7 +21,10 @@ class StockMovementController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = StockMovement::with(['product:id,name,sku', 'warehouse:id,name,code', 'creator:id,name']);
+        $user = $request->user();
+        $query = StockMovement::withoutGlobalScope('company')
+            ->where('company_id', $user->company_id)
+            ->with(['product:id,name,sku,company_id', 'warehouse:id,name,code', 'creator:id,name']);
 
         if ($request->filled('product_id')) {
             $query->where('product_id', $request->integer('product_id'));

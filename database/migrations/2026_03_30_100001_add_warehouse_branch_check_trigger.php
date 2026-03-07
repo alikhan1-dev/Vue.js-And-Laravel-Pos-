@@ -14,6 +14,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (DB::getDriverName() !== 'mysql') {
+            return;
+        }
+
         DB::unprepared('
             CREATE TRIGGER sale_lines_warehouse_branch_check
             BEFORE INSERT ON sale_lines
@@ -63,6 +67,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::getDriverName() !== 'mysql') {
+            return;
+        }
+
         DB::unprepared('DROP TRIGGER IF EXISTS sale_lines_warehouse_branch_check');
         DB::unprepared('DROP TRIGGER IF EXISTS sale_lines_warehouse_branch_check_update');
     }

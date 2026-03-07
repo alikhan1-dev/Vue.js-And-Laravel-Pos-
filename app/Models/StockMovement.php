@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
+use App\Enums\MovementReasonCode;
 use App\Enums\StockMovementType;
 use App\Models\Product;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -79,8 +81,18 @@ class StockMovement extends Model
             'unit_cost' => 'decimal:4',
             'type' => StockMovementType::class,
             'movement_date' => 'datetime',
-            'reason_code' => \App\Enums\MovementReasonCode::class.':nullable',
         ];
+    }
+
+    /** reason_code is nullable in DB; enum cast must not run on null. */
+    protected function reasonCode(): Attribute
+    {
+        return Attribute::make(
+            get: fn (?string $value) => $value === null || $value === ''
+                ? null
+                : MovementReasonCode::from($value),
+            set: fn ($value) => $value instanceof MovementReasonCode ? $value->value : $value,
+        );
     }
 
     /**
